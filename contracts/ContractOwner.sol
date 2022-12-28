@@ -6,6 +6,7 @@ error OnlyAdminsCanExecuteThisFunction();
 error CanNotSetToTheZeroAddress();
 error KillSwitchIsEngaged();
 
+
 /// @notice Interface covering the calls in the "FORWARDING CALLS : NAMED FUNCTIONS"  
 /// section below.
 interface OwnedContract {
@@ -14,25 +15,28 @@ interface OwnedContract {
     function withdraw(address recipient) external;
 }
 
+
 /// @author reggie rumsfeld @ ΞTHUNDERGROUND.xyz
 /// @notice A smart contract owner with role based access control logic
 /// @dev Introduces simple role based access control to ownable contracts, e.g. 
 /// where such logic is absent in the owned contract.
-///
+
 /// The contract distinguishes between 1.) a SUPER admin (e.g. the project owner)
-/// and 2.) a regular admin (e.g. the lead tech on a project).
-/// 
-/// This contract('s address) is to be appointed as owner of the ownable contract.
-///
+/// and 2.) a regular admin (e.g. the dev on a project).
+
+/// This contract('s address) is to be appointed as owner of the ownable contract. From there on,
+/// functions on that contract which are subject to the modifier onlyOwner, can only be called 
+/// successfully through this contract, with this contract as msg.sender.
+
 /// The named functions in the section FORWARDING CALLS, CALL the eponymous function 
 /// selectors on the owned contracts. Here, these functions are of a financial / 
 /// proprietorial nature, and - hence - the prerogative of the SUPER admin (onlySuper modifier). 
-///
+
 /// Data with a function selector which can not be indentified on this contract, will 
-/// be forwared (CALL) to the owned contract via the fallback() function. This function 
-/// is subject to the onlyAdmin modfier. This means that any function on the owned contract,
-/// which is not specifically addressed/named on this contract, can be called by BOTH
-/// the admin and the superadmin (via the fallback())
+/// be forwared (by means of the CALL opcode - NOT DELEGATECALL) to the owned contract via the 
+/// fallback() function. This function is subject to the onlyAdmin modfier. This means that any function 
+/// on the owned contract, which is not specifically addressed/named on this contract, can be called
+/// by BOTHthe admin and the superadmin (via the fallback()).
 
 contract ContractOwner {
 
@@ -54,6 +58,10 @@ contract ContractOwner {
     event AdminSet(address indexed admin);
     event ReceivedEth(address indexed from, uint256 indexed amount);
 
+    ///////////////
+    // MODIFIERS //
+    ///////////////
+    
     modifier onlySuper {
         if(msg.sender != superadmin) 
             revert OnlySuperAdminCanExecuteThisFunction();
@@ -71,18 +79,26 @@ contract ContractOwner {
         _;
     }
 
-    /// @notice Checks is the kill switch is off and turns it back "on",
-    /// by setting the value of _killSwitch to 0, after passing the check.
+    /// @notice Checks if the kill switch is off and turns it back "on",
+    /// by setting the value of _killSwitch to 0, if passing the check.
     modifier killSwitch() {
         if(!killSwitchOff()) revert KillSwitchIsEngaged();
         _killSwitch = 0;
         _;
     }
 
+    /////////////////
+    // CONSTRUCTOR //
+    /////////////////
+
     constructor(address delegate_, address superadmin_) {
         _setDelegate(delegate_);
         _setSuper(superadmin_);
     }
+
+    /////////////
+    // RECEIVE //
+    /////////////
 
     receive() external payable {
         emit ReceivedEth(msg.sender, msg.value);
@@ -94,15 +110,14 @@ contract ContractOwner {
 
     /// @notice Turning off the killswitch
     /// @dev Setting the killswitch to the current timestamp, as to pass the 
-    /// killSwitchOff modifier requirements
+    /// killSwitchOff modifier requirements. Functions which have the potential to "lock out",
+    /// require disengaging the kill switch.
     function turnOffKillSwitch() external onlySuper {
         _killSwitch = block.timestamp;
         emit KillSwitchDisengaged();
     }
 
     /// @notice Indicates wether the killswitch is turned off.
-    /// @dev Functions which have the potential to "lock out",
-    /// require disengaging the kill switch
     function killSwitchOff() public view returns (bool) {
         if (_killSwitch == 0 || _killSwitch + 40 < block.timestamp) return false;
         return true;
@@ -176,24 +191,30 @@ contract ContractOwner {
     }
 
     /// @notice transfer ownerships of THE OWNED CONTRACT
-    /// @dev renounce- and transferOwnership are part of OZ's Ownable module
+    /// @dev renounce- and transferOwnership are part of OZ's Ownable module, and hence 
+    /// in the abi of contracts inheriting said module. Specifically dealing with them 
+    /// here, allows me to make them the prerogative of the super admin.
     function transferOwnership(address newowner) external onlySuper killSwitch {
         OwnedContract(delegate).transferOwnership(newowner);
     }
 
-    /// @notice Withdrawing the full balance of THE OWNED CONTRACT to the msg.sender
-    /// Included as a safer withdraw option then withdraw(address), since it leaves no 
-    /// room for copy/paste errors
+    /// @notice Withdrawing the full balance of THE OWNED CONTRACT to the msg.sender.
+    /// This function is included as a safer withdraw option than withdraw(address), since it 
+    /// leaves no room for copy/paste errors: it passes msg.sender as an argument to 
+    /// withdraw(address) below.
     function withdrawToSender() external {
         withdraw(msg.sender);
     }
 
     /// @notice Withdrawing the full balance of THE OWNED CONTRACT to the recipient
-    /// @dev tailored to a custom withdrawal function on the owned contract!
+    /// ********************************
+    ///   !!!   HERE BE DRAGONS   !!!  
+    /// ********************************
+    /// @dev tailored to the withdraw function on the contract I designed this one for.
     /// To be adjusted to the comparable function selector on the contract
-    /// this contract will own. If such function selector is different, - e.g. 
-    /// withdraw(address recipient, uint256 amount) - and not dealt with in this 
-    /// section, the lesser admin will be able to withdraw balance from the owned 
+    /// this contract will own. If such function selector is different then withdraw(address),
+    /// - e.g. withdraw(address recipient, uint256 amount) - and not EXPLICITLY dealt with in this 
+    /// section, the regular admin will be able to withdraw balance from the owned 
     /// contract (via the fallback() function).
     function withdraw(address recipient) public onlySuper notZeroAddress(recipient) {
         OwnedContract(delegate).withdraw(recipient);
